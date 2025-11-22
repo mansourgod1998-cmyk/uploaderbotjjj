@@ -1,8 +1,7 @@
-aiogram==3.3.0
+aiogram==2.25.1
 aiosqlite==0.19.0
 python-dotenv==1.0.1
-aiohttp==3.9.3
-yarl==1.9.4
-magic-filter==1.0.12
+
+
 
 
