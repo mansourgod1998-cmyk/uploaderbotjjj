@@ -1,0 +1,125 @@
+import asyncio
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from config import BOT_TOKEN, ADMIN_ID
+import database as db
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+async def check_subscriptions(user_id):
+    channels = await db.list_channels()
+    not_joined = []
+    for ch in channels:
+        try:
+            member = await bot.get_chat_member(ch, user_id)
+            if member.status in ["left", "kicked"]:
+                not_joined.append(ch)
+        except:
+            not_joined.append(ch)
+    return not_joined
+
+@dp.message(Command("start"))
+async def start(message: types.Message):
+    await message.answer("🎬 سلام! برای دیدن فایل‌ها لینک اختصاصی خودت رو بفرست.\nادمین می‌تونه فایل‌ها و کانال‌ها رو تنظیم کنه.")
+
+@dp.message(Command("addchannel"))
+async def add_channel(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split()
+    if len(parts) == 2:
+        await db.add_channel(parts[1])
+        await message.answer(f"✅ کانال {parts[1]} اضافه شد.")
+    else:
+        await message.answer("❌ فرمت اشتباه. مثال: /addchannel @channelname")
+
+@dp.message(Command("removechannel"))
+async def remove_channel(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    parts = message.text.split()
+    if len(parts) == 2:
+        await db.remove_channel(parts[1])
+        await message.answer(f"🗑️ کانال {parts[1]} حذف شد.")
+    else:
+        await message.answer("❌ فرمت اشتباه. مثال: /removechannel @channelname")
+
+@dp.message(Command("listchannels"))
+async def list_channels(message: types.Message):
+    channels = await db.list_channels()
+    if channels:
+        await message.answer("📢 کانال‌های فعلی:\n" + "\n".join(channels))
+    else:
+        await message.answer("هیچ کانالی ثبت نشده.")
+
+@dp.message(Command("stats"))
+async def stats(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    files = await db.list_files()
+    if not files:
+        await message.answer("هنوز فایلی آپلود نشده.")
+        return
+    text = "\n".join([f"📁 {f[1] or 'بدون توضیح'} — 👁 {f[2]} بازدید" for f in files])
+    await message.answer(f"📊 آمار بازدید:\n{text}")
+
+@dp.message()
+async def handle_files(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    if message.video or message.photo or message.document:
+        file_id = (
+            message.video.file_id if message.video else
+            message.photo[-1].file_id if message.photo else
+            message.document.file_id
+        )
+        caption = message.caption or "بدون توضیح"
+        await db.add_file(file_id, caption)
+        files = await db.list_files()
+        file_db_id = files[-1][0]
+        await message.answer(f"✅ فایل ذخیره شد.\n📎 لینک اختصاصی: `/watch_{file_db_id}`", parse_mode="Markdown")
+
+@dp.message(F.text.startswith("/watch_"))
+async def watch_file(message: types.Message):
+    file_id = int(message.text.split("_")[1])
+    not_joined = await check_subscriptions(message.from_user.id)
+
+    if not_joined:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"عضو شدن در {ch}", url=f"https://t.me/{ch[1:]}")] for ch in not_joined
+        ])
+        kb.inline_keyboard.append([InlineKeyboardButton(text="✅ عضو شدم", callback_data=f"check_{file_id}")])
+        await message.answer("⚠️ لطفاً ابتدا در کانال‌های زیر عضو شو و سپس روی «عضو شدم ✅» بزن:", reply_markup=kb)
+        return
+
+    await send_file(message.chat.id, file_id)
+
+@dp.callback_query(F.data.startswith("check_"))
+async def recheck_subscription(callback: CallbackQuery):
+    file_id = int(callback.data.split("_")[1])
+    not_joined = await check_subscriptions(callback.from_user.id)
+    if not_joined:
+        await callback.answer("هنوز عضو همه کانال‌ها نشدی ❌", show_alert=True)
+    else:
+        await callback.answer("✅ تایید شد! در حال ارسال فایل...")
+        await send_file(callback.from_user.id, file_id)
+
+async def send_file(chat_id, file_id):
+    data = await db.get_file(file_id)
+    if not data:
+        await bot.send_message(chat_id, "❌ فایل پیدا نشد.")
+        return
+
+    await db.increment_views(file_id)
+    sent = await bot.send_video(chat_id, data[1], caption=data[2])
+    await asyncio.sleep(30)
+    await bot.delete_message(chat_id, sent.message_id)
+
+async def main():
+    await db.init_db()
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())

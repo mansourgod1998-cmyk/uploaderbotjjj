@@ -1,0 +1,56 @@
+import aiosqlite
+
+DB_NAME = "data.db"
+
+async def init_db():
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id TEXT,
+                caption TEXT,
+                views INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE
+            )
+        """)
+        await db.commit()
+
+async def add_file(file_id, caption):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT INTO files (file_id, caption) VALUES (?, ?)", (file_id, caption))
+        await db.commit()
+
+async def get_file(file_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT * FROM files WHERE id = ?", (file_id,)) as cursor:
+            return await cursor.fetchone()
+
+async def increment_views(file_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE files SET views = views + 1 WHERE id = ?", (file_id,))
+        await db.commit()
+
+async def list_files():
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT id, caption, views FROM files") as cursor:
+            return await cursor.fetchall()
+
+async def add_channel(username):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT OR IGNORE INTO channels (username) VALUES (?)", (username,))
+        await db.commit()
+
+async def remove_channel(username):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM channels WHERE username = ?", (username,))
+        await db.commit()
+
+async def list_channels():
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT username FROM channels") as cursor:
+            return [row[0] for row in await cursor.fetchall()]
